@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import select
 import os
 from dotenv import load_dotenv
-
+from aiogram.types import Message, LabeledPrice, PreCheckoutQuery
 
 
 
@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
+PAYMENT_TOKEN = os.getenv("PAYMENT_TOKEN") 
 
 
 
@@ -110,22 +110,119 @@ async def cmd_add(message: Message):
 
 
 
-@dp.message(Command("pay"))
-async def cmd_pay(message: Message):
+# @dp.message(Command("pay"))
+# async def cmd_pay(message: Message):
+#     with SessionLocal() as session:
+#         # Берём первую запись (по возрастанию id)
+#         person = session.scalars(
+#             select(Person).order_by(Person.id.asc()).limit(1).with_for_update()
+#         ).first()
+
+#         if person is None:
+#             await message.answer("База пуста. Добавь через /add <код>.")
+#             return
+#         code = person.code
+#         person_id = person.id
+#         session.delete(person)
+#         session.commit()
+#     await message.answer(f"Выдан код: {code} (id={person_id})")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def get_and_remove_code():
     with SessionLocal() as session:
-        # Берём первую запись (по возрастанию id)
         person = session.scalars(
             select(Person).order_by(Person.id.asc()).limit(1).with_for_update()
         ).first()
-
         if person is None:
-            await message.answer("База пуста. Добавь через /add <код>.")
-            return
+            return None, None
         code = person.code
         person_id = person.id
         session.delete(person)
         session.commit()
-    await message.answer(f"Выдан код: {code} (id={person_id})")
+        return code, person_id
+
+# Новая команда /pay для инициации оплаты
+@dp.message(Command("pay"))
+async def cmd_pay(message: Message):
+    with SessionLocal() as session:
+        exists = session.scalars(select(Person).limit(1)).first()
+        if not exists:
+            await message.answer("База пуста. Добавь код через /add <код> перед оплатой.")
+            return
+
+    
+    await message.answer_invoice(
+        title="Покупка кода",
+        description="Оплата за получение уникального кода",
+        payload="code_purchase_payload", 
+        provider_token=PAYMENT_TOKEN,
+        currency="RUB",
+        prices=[LabeledPrice(label="Код", amount=10000)], 
+        start_parameter="buy-code"
+    )
+
+
+@dp.pre_checkout_query()
+async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery):
+    
+    await pre_checkout_query.answer(ok=True)
+
+
+@dp.message(F.successful_payment)
+async def process_successful_payment(message: Message):
+   
+    code, person_id = get_and_remove_code()
+    
+    if code:
+        await message.answer(
+            f"✅ Оплата прошла успешно!\n\n"
+            f"Ваш код: `{code}`\n"
+            f"(ID записи: {person_id})",
+            parse_mode="Markdown"
+        )
+        
+        payment_id = message.successful_payment.telegram_payment_charge_id
+        logging.info(f"Успешный платёж {payment_id}. Выдан код {code}")
+    else:
+        
+        await message.answer(
+            "❌ Оплата прошла, но коды закончились. Пожалуйста, свяжитесь с администратором для возврата средств."
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
